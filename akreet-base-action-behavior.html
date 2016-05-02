@@ -1,0 +1,594 @@
+<link rel="import" href="../components/polymer/polymer.html">
+<link rel="import" href="../components/iron-ajax/iron-request.html">
+<link rel="import" href="http-util.html">
+<link rel="import" href="tv4/tv4.html">
+<script>
+    akreet = window.akreet || {};
+    akreet.BaseActionBehavior = {
+
+        properties: {
+
+            /**
+             * The event listener which is bound to the parent window when this
+             * element attaches itself to the dom.
+             *
+             * @property parentWindowEventListener
+             * @type {Object}
+             * @default null
+             */
+            parentWindowEventListener: {
+                type: Object,
+                value: null
+            },
+
+            /**
+             * The parentDomain which is extracted from the url query parameter. This should
+             * be passed in by the parent window.
+             *
+             * @property parentDomain
+             * @type {String}
+             * @default null
+             */
+            parentDomain: {
+                type: Object,
+                value: null
+            },
+
+            /**
+             * The actionId which is extracted from the url query parameter. This should
+             * be passed in by the parent window.
+             *
+             * @property parentDomain
+             * @type {String}
+             * @default null
+             */
+            actionId: {
+                type: String,
+                value: null
+            },
+
+            /**
+             * @property userId
+             * @type {String}
+             * @default null
+             */
+            userId: {
+                type: String,
+                value: null
+            },
+
+            /**
+             * @property akreetId
+             * @type {String}
+             * @default null
+             */
+            akreetId: {
+                type: String,
+                value: null
+            },
+
+            /**
+             * @property contentStoreId
+             * @type {String}
+             * @default null
+             */
+            contentStoreId: {
+                type: String,
+                value: null
+            },
+
+            /**
+             * @property edit
+             * @type {Boolean}
+             * @default false
+             */
+            edit: {
+                type: Boolean,
+                value: false
+            },
+
+            /**
+             * @property akreetImportAsset
+             * @type {Boolean}
+             * @default false
+             */
+            akreetImportAsset: {
+                type: Boolean,
+                value: false
+            },
+
+            /**
+             * @property importAssetId
+             * @type {String}
+             * @default null
+             */
+            importAssetId: {
+                type: String,
+                value: null
+            },
+
+            /**
+             * The schema associated with this action.
+             *
+             * @property _schema
+             * @type {Object}
+             * @default {}
+             */
+            _schema: {
+                type: Object,
+                value: function() {
+                    return {}
+                }
+            },
+
+            /**
+             * This is an array of schemas that this action can accept.
+             *
+             * @property _acceptsSchemas
+             */
+            _acceptsSchemas: {
+                type: Array,
+                value: function() {
+                    return [];
+                }
+
+            }
+        },
+
+        /**
+         * Set the schema value when actionId is set. Here we make a REST call
+         * to resolve the schema object.
+         */
+        _setSchema: function(callback) {
+            if(this.actionId) {
+                document.createElement('iron-request').send(
+                        {
+                            method: 'GET',
+                            url: this.parentDomain + '/schema/getByActionId?' + HttpUtil.toQueryString({
+                                actionId: this.actionId
+                            }),
+                            handleAs: 'json',
+                        }
+                ).then(
+                        function (request) {
+                            if (request.response.status === 'ok') {
+                                this._schema = request.response.schema;
+                                this._acceptsSchemas = request.response.acceptsSchema;
+                                console.log('[_setSchema] schema set: ' + JSON.stringify(this._schema, null, 4));
+                                callback();
+                            } else {
+                                this.handleErrorResponse(request.response.response);
+                            }
+                        }.bind(this)
+                ).catch(
+                        function (exception) {
+                            this.handleException(exception);
+                        }.bind(this)
+                );
+            }
+        },
+
+        /**
+         * Resolve the parentDomain and actionId from the url. Then attach a message
+         * event listener to the window to receive message from parent window.
+         *
+         * @method attached
+         */
+        attached: function () {
+            // resolve parentDomain
+            this.parentDomain = HttpUtil.getParam('parentDomain');
+            console.log('[attached] parentDomain: ' + this.parentDomain);
+
+            // resolve actionId
+            this.actionId = HttpUtil.getParam('actionId');
+            console.log('[attached] actionId: ' + this.actionId);
+
+            // resolve userId
+            this.userId = HttpUtil.getParam('userId');
+            console.log('[attached] userId: ' + this.userId);
+
+            // resolve akreetId
+            this.akreetId = HttpUtil.getParam('akreetId');
+            console.log('[attached] akreetId: ' + this.akreetId);
+
+            // start listening to events from parent window
+            if (this.parentDomain && this.actionId) {
+                // bind to window for message events
+                this.parentWindowEventListener = function (e) {
+                    if (this.parentDomain && (e.origin === this.parentDomain)) {
+                        this._dispatchEvent(e.data);
+                    } else {
+                        console.log('rejecting message: ' + e.origin + ', expected: ' + this.parentDomain);
+                    }
+                }.bind(this);
+                window.addEventListener('message', this.parentWindowEventListener);
+                console.log('[attached] attached parentWindowEventListener');
+            } else {
+                throw 'expected to find parentDomain and actionId in url query params';
+            }
+
+            // this set the schema and acceptsSchemas
+            this._setSchema(function() {
+
+                // resolve edit
+                if(HttpUtil.isParamPresent('edit')) {
+                    this.edit = HttpUtil.getParam('edit');
+                    console.log('[attached] edit: ' + this.edit);
+                }
+
+                // resolve contentStoreId if edit is true
+                if(this.edit) {
+                    // resolve contentStoreId
+                    this.contentStoreId = HttpUtil.getParam('contentStoreId');
+                    console.log('[attached] contentStoreId: ' + this.contentStoreId);
+
+                    this.async(function() {
+                        this.loadContentStore(this.contentStoreId);
+                    }.bind(this));
+                }
+
+                // resolve akreetImportAsset
+                if(HttpUtil.isParamPresent('akreetImportAsset')) {
+                    this.akreetImportAsset = HttpUtil.getParam('akreetImportAsset');
+                    console.log('[attached] akreetImportAsset: ' + this.akreetImportAsset);
+                }
+
+                // if akreetImportAsset notify subclass to load import asset
+                if(this.akreetImportAsset) {
+                    // resolve contentStoreId
+                    this.importAssetId = HttpUtil.getParam('importAssetId');
+
+                    console.log('[attached] importAssetId: ' + this.importAssetId);
+
+                    this.async(function() {
+                        this.loadImportAsset(this.importAssetId);
+                    }.bind(this));
+                }
+
+            }.bind(this));
+
+        },
+
+        /**
+         * Unbind message listener from window.
+         *
+         * @method detached
+         */
+        detached: function () {
+
+            // unbind from window
+            window.removeEventListener('message', this.parentWindowEventListener);
+            console.log('[detached] detached parentWindowEventListener');
+
+        },
+
+        /**
+         * Send message to parent window.
+         *
+         * @method sendMessage
+         * @param {Object} eventData Data from parent window
+         */
+        _dispatchEvent: function (eventData) {
+            if (eventData) {
+                try {
+                    var type = eventData.type;
+
+                    switch (true) {
+                        case /^akreet:event-save$/i.test(type):
+                            this.onEventSaveReceived(eventData.data);
+                            break;
+                        case /^akreet:event-cancel$/i.test(type):
+                            this.onEventCancelReceived(eventData.data);
+                            break;
+                        default:
+                            console.log('did you forget to handle this case: ' + type);
+                    }
+                } catch (e) {
+                    console.log('Corrupt event ignoring: ' + e);
+                }
+            }
+        },
+
+        /**
+         * Send message to parent window.
+         *
+         * @method sendMessage
+         * @param {Object} message Message object to send to parent window
+         */
+        sendMessage: function (message) {
+            window.parent.postMessage(message, this.parentDomain);
+        },
+
+        /**
+         * Makes REST call to akreet to save the contentStore
+         *
+         * @method saveContentStore
+         * @param {Array} files array of file objects
+         * @param {Function} callback
+         */
+        saveContentStore: function (payload, files, callback) {
+            if(!tv4.validate(payload, this._schema.schema)) {
+                var errors = tv4.error;
+                throw 'Payload does not conform to action schema: ' + JSON.stringify(errors, null, 4);
+            }
+
+            // you made it all is good
+            // create FormData for the POST request
+            var formData = new FormData();
+            formData.append('payload', JSON.stringify(payload));
+
+            // set the schema code in the formData
+            formData.append('schemaCode', this._schema.code);
+
+            // if there are files we add them to the FormData
+            if(files && files.length > 0) {
+                files.forEach(function(file) {
+                    formData.append('file', file, file.name);
+                });
+            }
+
+            // make the request to importAsset
+            document.createElement('iron-request').send(
+                    {
+                        method: 'POST',
+                        url: this.parentDomain + '/importAsset/save',
+                        handleAs: 'json',
+                        body: formData,
+                    }
+            ).then(
+                    function (request) {
+                        if (request.response.status === 'ok') {
+                            callback(request.response.importAssetId);
+                        } else {
+                            this.handleErrorResponse(request.response.response);
+                        }
+                    }.bind(this)
+            ).catch(
+                    function(exception) {
+                        this.handleException(exception);
+                    }.bind(this)
+            );
+        },
+
+        /**
+         * Makes REST call to akreet to update the contentStore.
+         *
+         * @method updateContentStore
+         * @param {String} contentStoreId
+         * @param {Object} data
+         * @param {Function} callback
+         */
+        updateContentStore: function (contentStoreId, data, callback) {
+            if(!tv4.validate(data, this._schema.schema)) {
+                var errors = tv4.error;
+                throw 'Payload does not conform to action schema: ' + JSON.stringify(errors, null, 4);
+            }
+
+            // make the request to update the contentStore
+            document.createElement('iron-request').send(
+                    {
+                        method: 'POST',
+                        headers: {'content-type': 'application/x-www-form-urlencoded'},
+                        url: this.parentDomain + '/contentStore/updateContentStore',
+                        handleAs: 'json',
+                        body: HttpUtil.toQueryString({
+                            data: JSON.stringify(data),
+                            contentStoreId: contentStoreId
+                        })
+                    }
+            ).then(
+                    function (request) {
+                        if(request.response.status === 'ok') {
+                            callback(request.response.importAssetId);
+                        } else {
+                            this.handleErrorResponse(request.response);
+                        }
+                    }
+            ).catch(
+                    function(exception) {
+                        this.handleException(exception);
+                    }.bind(this)
+            )
+        },
+
+        /**
+         * Makes REST call to akreet to retrieve contentStore.
+         *
+         * @param {String} contentStoreId
+         * @param {Function} callback
+         */
+        retrieveContentStore: function (contentStoreId, callback) {
+            document.createElement('iron-request').send(
+                    {
+                        url: this.parentDomain + '/contentStore/get?' + HttpUtil.toQueryString({
+                            contentStoreId: contentStoreId
+                        }),
+                        method: 'GET',
+                        handleAs: 'json'
+                    }
+            ).then(
+                    function (request) {
+                        if(request.response.status === 'ok') {
+                            callback(request.response.contentStore);
+                        } else {
+                            this.handleErrorResponse(request.response);
+                        }
+                    }
+            );
+        },
+
+        /**
+         * Makes REST call to akreet to retrieve importAsset.
+         *
+         * @param {String} importAssetId
+         * @param {Function} callback
+         */
+        retrieveImportAsset: function (importAssetId, callback) {
+            document.createElement('iron-request').send(
+                    {
+                        url: this.parentDomain + '/importAsset',
+                        method: 'GET',
+                        handleAs: 'json',
+                        params: {
+                            importAssetId: importAssetId
+                        },
+                    }
+            ).then(
+                    function (response) {
+                        if(response.status === 'ok') {
+                            callback(response.importAsset);
+                        } else {
+                            this.handleErrorResponse(response);
+                        }
+                    }
+            ).catch(
+                    function(exception) {
+                        this.handleException(exception);
+                    }.bind(this)
+            );
+        },
+
+        /**
+         * Generic way to handle an error response.
+         *
+         * @method handleErrorResponse
+         * @param response
+         */
+        handleErrorResponse: function(response) {
+            throw 'error response from server: ' + JSON.stringify(response.errors);
+        },
+
+        /**
+         * Generic way to handle an exception from the server.
+         *
+         * @method handleException
+         * @param exception
+         */
+        handleException: function(exception) {
+            throw 'exception from server: ' + JSON.stringify(exception);
+        },
+
+        /**
+         * This will be invoked if the edit flag is set to true, informing the
+         * element that it should load the given contentStoreId. Subclassing
+         * implementations should define a onLoadContentStore function to receive
+         * the contentStore.
+         *
+         * @param contentStoreId
+         */
+        loadContentStore: function(contentStoreId) {
+            // only retrieve the contentStore data if an onLoadContentStore
+            // function is defined, otherwize skip it.
+            if(this.onLoadContentStore) {
+                this.retrieveContentStore(contentStoreId, function (contentStore) {
+
+                    // if the contentStore doesn't conform to schema then switch to non-edit
+                    // mode this will allow the user to save this contentStore's data
+                    // into the schema format that matches this contentstore.
+                    if(contentStore.metadata.schemaId !== this._schema.id) {
+                        this.edit = false;
+                    }
+
+                    this.onLoadContentStore(contentStore);
+                }.bind(this));
+            } else {
+                throw ('attempted to load content store, did you forget to implement onLoadContentStore?');
+            }
+        },
+
+        /**
+         * This will be invoked if the akreetImportAsset flag is set to true, informing the
+         * element that it should load the given importAsset. Subclassing
+         * implementations should define a onLoadImportAsset function to receive
+         * the importAsset.
+         *
+         * @param importAssetId
+         */
+        loadImportAsset: function(importAssetId) {
+            // only retrieve the importAsset data if an onLoadImportAsset
+            // function is defined, otherwize skip it.
+            if(this.onLoadImportAsset) {
+                this.retrieveImportAsset(importAssetId, function (importAsset) {
+                    this.onLoadImportAsset(importAsset);
+                }.bind(this));
+            } else {
+                throw ('attempted to load importAsset, did you forget to implement onLoadImportAsset?');
+            }
+        },
+
+        /**
+         * Send message back to parent that you are done.
+         *
+         * @method cancel
+         */
+        cancel: function() {
+            this.sendMessage( {
+                type: 'akreet:action-cancel-complete'
+            });
+        },
+
+        /**
+         * This will invoke the handling function as registered by each schema
+         * in the schema handlers. Additionally you can add two more keys
+         * to the schemaHandler to handle contentStores which aren't supported
+         * by any of the acceptSchemas.
+         *
+         * {
+         *    notsupported: function(contentStore) {
+         *        // invoked if this action can't accept the contentStore
+         *    }
+         * }
+         *
+         * The eventual schema handler will be determined by metadata.schemaId
+         * value of the contentStore. If it matches one of the schemaHandler keys
+         * and if the contentStore.data value conforms to the schema format, then
+         * the schemaHandler will be invoked. If none of the schemaHandlers can
+         * handle the contentStore then the schemaNamdler ["notsupported"] will
+         * be invoked.
+         *
+         * @param schemaHandlers
+         */
+        dispatchToSchemaHandler: function(contentStore, schemaHandlers) {
+            if(contentStore == null) {
+                throw 'Expected contentStore to not be null';
+            }
+            if(schemaHandlers == null) {
+                throw 'Expected schemaHandlers to not be null';
+            }
+
+            if(this._acceptsSchemas && this._acceptsSchemas.length) {
+                var findAcceptingSchema = function(contentStore) {
+                    var acceptingSchema = null;
+                    this._acceptsSchemas.forEach(function(schema) {
+                        if(schema.id === contentStore.metadata.schemaId) {
+                            acceptingSchema = schema;
+                        }
+                    }.bind(this));
+                    return acceptingSchema;
+                }.bind(this);
+
+                // find the accepting schema
+                var acceptingSchema = findAcceptingSchema(contentStore);
+
+                // if we have one and the contentStore.data conforms and we have a corresponding schema handler...
+                // then invoke the sucker
+                if(acceptingSchema &&  tv4.validate(contentStore.data, acceptingSchema.schema) && schemaHandlers[acceptingSchema.code]) {
+
+                    schemaHandlers[acceptingSchema.code](contentStore);
+
+                }
+
+                // otherwize not supported too bad call notsupported handler if there is one.
+                else {
+
+                    if(schemaHandlers["notsupported"]) {
+                        schemaHandlers["notsupported"](contentStore);
+                    }
+                }
+
+            }
+
+        }
+
+    }
+</script>
